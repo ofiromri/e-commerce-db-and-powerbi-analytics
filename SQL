@@ -1,0 +1,727 @@
+--question 1 
+SELECT 
+  B.AddressCountry AS Country,
+  I.Category AS ProductCategory,
+  COUNT(*) AS ProductCount
+FROM 
+    TRANSACTIONS AS T
+JOIN 
+    ITEMS AS I ON T.TransNumber = I.TransNumber
+JOIN 
+    BUYERS AS B ON T.Buyer = B.UserName
+
+WHERE B.AddressCountry NOT IN ('Canada')
+GROUP BY 
+    B.AddressCountry, I.Category
+HAVING 
+    COUNT(*) > 5
+ORDER BY 
+    ProductCount DESC;
+
+
+SELECT TOP 10
+    B.UserName AS Buyer,
+    B.AddressCountry AS Country,
+    COUNT(T.TransNumber) AS TotalOldItemsPurchased,
+    SUM(T.FinalPrice) AS TotalSpentOnOldItems
+FROM 
+    TRANSACTIONS AS T
+JOIN 
+    ITEMS AS I ON T.TransNumber = I.TransNumber
+JOIN 
+    BUYERS AS B ON T.Buyer = B.UserName
+WHERE 
+    I.Condition IN ('Used', '[Good Condition]') 
+GROUP BY 
+    B.UserName, B.AddressCountry
+HAVING 
+    COUNT(T.TransNumber) > 5
+    AND SUM(T.FinalPrice) > 100 
+ORDER BY 
+    TotalOldItemsPurchased DESC, TotalSpentOnOldItems DESC;
+
+
+
+--question 2
+SELECT
+	OWNER=OWN.OWNERNAME,
+	NUMTYPES=OWN.NUMOFTYPES,
+	TRANSACTIONS=COUNT(T.TRANSNUMBER),
+	profit=sum(T.FinalPrice)
+	FROM
+	TRANSACTIONS AS T JOIN(
+	SELECT --We received a table where each record shows a customer with the number of credit cards from different companies.
+	O.OWNERNAME,
+	NUMOFTYPES=COUNT(DISTINCT C.TYPE)
+	FROM OWNERSHIPS AS O JOIN CREDITCARDS AS C ON(O.CARDNUMBER=C.CREDITCARD)
+	GROUP BY O.OWNERNAME
+	HAVING COUNT(DISTINCT C.TYPE)>1--Customers with at least two credit cards from different companies. 
+	) AS OWN ON(T.BUYER=OWN.OWNERNAME)
+	GROUP BY OWN.OWNERNAME,OWN.NUMOFTYPES
+	
+ORDER BY PROFIT DESC
+
+
+SELECT TOP 10
+    T.Seller AS TopSeller,
+    SUM(T.FinalPrice) AS TotalRevenue,
+  ROUND((CAST(SUM(T.FinalPrice) AS FLOAT) / (SELECT SUM(FinalPrice) FROM TRANSACTIONS) * 100), 2) AS PrecentsRevenue
+FROM 
+    TRANSACTIONS AS T
+GROUP BY 
+    T.Seller
+ORDER BY TotalRevenue DESC;
+
+--question 3
+SELECT 
+    I.Category AS ProductCategory,
+    SUM(T.FinalPrice) AS TotalPrice,
+    NTILE(4) OVER (ORDER BY SUM(T.FinalPrice) DESC ) AS Quartile,
+	    LEAD(SUM(T.FinalPrice)) OVER (ORDER BY SUM(T.FinalPrice) DESC) AS NextCategoryPrice,
+    SUM(T.FinalPrice) - LEAD(SUM(T.FinalPrice)) OVER (ORDER BY SUM(T.FinalPrice) DESC) AS PriceDifference
+FROM 
+    ITEMS AS I
+JOIN 
+    TRANSACTIONS AS T ON I.TransNumber = T.TransNumber
+
+GROUP BY 
+    I.Category
+ORDER BY 
+    TotalPrice DESC;
+
+
+
+
+SELECT 
+    C.Type AS CreditCardType,
+    COUNT(T.TransNumber) AS NumberOfTransactions,
+    RANK() OVER (ORDER BY COUNT(T.TransNumber) DESC) AS RankByTransactions,
+    LAG(COUNT(T.TransNumber)) OVER (ORDER BY COUNT(T.TransNumber) DESC) AS PreviousTransactions,
+    COUNT(T.TransNumber) - LAG(COUNT(T.TransNumber), 1, 0) OVER (ORDER BY COUNT(T.TransNumber) DESC) AS TransactionDifference,
+    (COUNT(T.TransNumber) * 1.0 / SUM(COUNT(T.TransNumber)) OVER ()) * 100 AS PercentageOfTotalTransactions
+FROM 
+    CREDITCARDS AS C
+JOIN 
+    TRANSACTIONS AS T ON C.CreditCard = T.CreditCardNumber
+GROUP BY 
+    C.Type
+ORDER BY 
+    RankByTransactions;
+
+
+
+--question 4 with
+	WITH 
+   -- Subquery 1: Identifying products that were not purchased but were searched frequently. 
+    ProductSearches AS (
+        SELECT 
+        s.ItemID,
+        i.Category,
+        COUNT(s.ItemID) AS SearchCount,
+        i.Condition,
+        i.Price,
+        i.UserName
+    FROM SEARCHES s
+    JOIN ITEMS i ON s.ItemID = i.ItemID
+    GROUP BY s.ItemID, i.Category, i.Condition, i.Price, i.TransNumber, i.UserName
+    HAVING COUNT(s.ItemID) > 15 AND i.TransNumber IS NULL
+    ),
+
+   -- Subquery 2: Sellers with fewer than 3 transactions.
+    SellerTransactions AS (
+        SELECT 
+            t.Seller,
+            COUNT(*) AS SellerTransactions
+        FROM TRANSACTIONS t
+        GROUP BY t.Seller
+        HAVING COUNT(*) < 10 -- Sellers with fewer than 3 transactions.
+    ),
+
+   -- Subquery 3: Calculating the average price by categories.
+    AvgCategoryPrices AS (
+        SELECT 
+            i.Category,
+            AVG(i.Price) AS AvgPrice
+        FROM ITEMS i
+        GROUP BY i.Category
+    ),
+
+  -- Subquery 4: Joining all data related to the product (searches, sellers, average prices).
+    ProductDetails AS (
+        SELECT 
+            i.ItemID,
+            i.Category,
+            i.UserName,
+            i.Price,
+            i.Condition,
+            ps.SearchCount,
+            st.Seller,
+            ac.AvgPrice
+        FROM 
+            ITEMS i
+        JOIN 
+            ProductSearches ps ON i.ItemID = ps.ItemID  
+        LEFT JOIN 
+            SellerTransactions st ON i.UserName = st.Seller  
+        JOIN 
+            AvgCategoryPrices ac ON i.Category = ac.Category 
+    )
+
+SELECT 
+    pd.Category,
+    COUNT(DISTINCT pd.ItemID) AS ProductCount,
+    SUM(CASE WHEN pd.Condition = 'Used' THEN 1 ELSE 0 END) AS UsedProducts,
+    SUM(CASE WHEN pd.Seller IS NOT NULL THEN 1 ELSE 0 END) AS UnreliableSellers,
+    SUM(CASE WHEN pd.Price > pd.AvgPrice THEN 1 ELSE 0 END) AS HighPriceProducts
+FROM 
+    ProductDetails pd
+GROUP BY 
+    pd.Category
+ORDER BY 
+    pd.Category;
+
+
+
+--question 5 view
+	
+CREATE VIEW Month_Sales AS
+SELECT 
+    YEAR(T.TransactionDate) AS SaleYear, 
+    MONTH(T.TransactionDate) AS SaleMonth, 
+    COUNT(*) AS TotalItemsSold, 
+    SUM(T.FinalPrice) AS TotalSalesPrice,
+    (SELECT TOP 1 I.Category
+     FROM ITEMS AS I
+     JOIN TRANSACTIONS AS T2 ON I.TransNumber = T2.TransNumber
+     WHERE YEAR(T2.TransactionDate) = YEAR(T.TransactionDate) 
+       AND MONTH(T2.TransactionDate) = MONTH(T.TransactionDate)
+       AND I.TransNumber IS NOT NULL  -- Ensure that a transaction has been made.
+     GROUP BY I.Category
+     ORDER BY SUM(T2.FinalPrice) DESC) AS BestSellingCategory
+FROM TRANSACTIONS AS T
+GROUP BY 
+    YEAR(T.TransactionDate), 
+    MONTH(T.TransactionDate);
+
+	SELECT 
+    SaleMonth,
+    TotalItemsSold,
+    TotalSalesPrice,
+    BestSellingCategory,
+    TotalSalesPrice / TotalItemsSold AS AveragePricePerItem
+FROM Month_Sales
+WHERE SaleYear = 2024;
+
+
+
+
+--question 6 functions
+
+CREATE FUNCTION Get_Active_Buyers_By_Date(@NUMOFMONTHS INT)
+	RETURNS TABLE
+	AS RETURN
+	(
+	SELECT
+	COUNTYUSER=B.AddressCountry,
+	Buyer=B.USERNAME,
+	EmailUser=(U.EMAIL),
+	NAME=U.NAMEFIRST,
+	LastSearch=max(T.TransactionDate)
+	
+	FROM BUYERS AS B JOIN TRANSACTIONS AS T ON(B.USERNAME=T.BUYER) JOIN USERS AS U ON (B.UserName=U.UserName)
+	GROUP BY B.AddressCountry,B.username,U.EMAIL,U.NAMEFIRST
+	HAVING DATEDIFF(MONTH,MAX(T.TransactionDate), GETDATE())<=@NUMOFMONTHS 
+	)
+
+
+	SELECT
+	GBBD.Buyer,
+	UserEmail=GBBD.EmailUser,
+	DaysWithOutTransactions=DATEDIFF(DAY,GBBD.LastSearch,GETDATE()),
+	NumOfTransactions=COUNT (T.TRANSNUMBER)
+	
+	FROM dbo.Get_Active_Buyers_By_Date (7) AS GBBD join TRANSACTIONS AS T ON(GBBD.Buyer=T.BUYER)
+	WHERE COUNTYUSER='GERMANY' 
+	GROUP BY GBBD.Buyer,GBBD.EmailUser,GBBD.LastSearch
+	ORDER BY NumOfTransactions DESC
+
+
+
+
+
+	CREATE FUNCTION dbo.GetMonthContribution
+(
+    @Year INT,
+    @Month INT
+)
+RETURNS FLOAT
+AS
+BEGIN
+    DECLARE @MonthSales FLOAT;
+    DECLARE @YearSales FLOAT;
+    DECLARE @Contribution FLOAT;
+
+   -- Total sales for the requested month.
+    SELECT @MonthSales = SUM(TotalSalesPrice)
+    FROM Month_Sales
+    WHERE SaleYear = @Year AND SaleMonth = @Month;
+
+   -- Total sales for the requested year.
+    SELECT @YearSales = SUM(TotalSalesPrice)
+    FROM Month_Sales
+    WHERE SaleYear = @Year;
+
+	-- Calculating the relative contribution.
+    SET @Contribution = ISNULL(@MonthSales / NULLIF(@YearSales, 0), 0);
+
+    RETURN @Contribution;
+END;
+
+
+
+SELECT SaleMonth, 
+      100* CAST(dbo.GetMonthContribution(2023, SaleMonth) AS DECIMAL(10, 3)) AS ContributionPercentage
+FROM Month_Sales
+WHERE SaleYear = 2023
+  AND BestSellingCategory = 'Kids'
+ORDER BY ContributionPercentage DESC;
+
+
+CREATE TRIGGER trg_BeforeDeleteTransaction
+ON TRANSACTIONS
+INSTEAD OF DELETE
+AS
+BEGIN
+    -- 1. Storing data from DELETED into a temporary table.
+    SELECT D.TRANSNUMBER, I.CATEGORY
+    INTO #TempDeleted
+    FROM DELETED D
+    INNER JOIN ITEMS I ON D.TRANSNUMBER = I.TRANSNUMBER;
+
+-- 2. Update the ITEMS table so that the TRANSNUMBER of the product is set to NULL.
+    UPDATE ITEMS
+    SET TRANSNUMBER = NULL
+    WHERE TRANSNUMBER IN (SELECT TRANSNUMBER FROM DELETED);
+
+  -- 3. Update the CANCELEDTRANSACTIONS table with data from the temporary table.
+    MERGE INTO CANCELEDTRANSACTIONS AS target
+    USING (
+        SELECT CATEGORY, COUNT(*) AS CancellationsCount
+        FROM #TempDeleted
+        GROUP BY CATEGORY
+    ) AS source
+    ON target.CATEGORY = source.CATEGORY
+    WHEN MATCHED THEN
+        UPDATE SET NumberCancellations = NumberCancellations + source.CancellationsCount
+    WHEN NOT MATCHED BY TARGET THEN
+        INSERT (CATEGORY, NumberCancellations)
+        VALUES (source.CATEGORY, source.CancellationsCount);
+
+    -- 4. Deleting records from the TRANSACTIONS table.
+    DELETE FROM TRANSACTIONS
+    WHERE TRANSNUMBER IN (SELECT TRANSNUMBER FROM #TempDeleted);
+
+-- Cleaning up the temporary table.
+    DROP TABLE #TempDeleted;
+END;
+
+
+
+
+SELECT*-- Initial state of the canceled transactions table.
+FROM CANCELEDTRANSACTIONS
+
+
+INSERT INTO TRANSACTIONS (TransNumber, PriceAfterNegotiaon, Buyer, Seller, CreditCardNumber, FinalPrice, TransactionDate)
+VALUES-- Inserting transactions for demonstration.
+('TXN1032871', 446.55, 'emma7479', 'john5605', '4443-3848-2095-3458', 446.55, '2024-12-19 01:31:44.000'),
+('TXN1032872', 446.55, 'emma7479', 'john5605', '4443-3848-2095-3458', 446.55, '2024-12-19 01:31:44.000'),
+('TXN1032874', 446.55, 'emma7479', 'john5605', '4443-3848-2095-3458', 446.55, '2024-12-19 01:31:44.000');
+
+
+UPDATE ITEMS-- Updating the number of transactions for products.
+SET TransNumber = 'TXN1032871'
+WHERE TransNumber IS NULL AND ItemID = '13';  
+
+
+UPDATE ITEMS
+SET TransNumber = 'TXN1032872'
+WHERE TransNumber IS NULL AND ItemID = '117';  
+
+UPDATE ITEMS
+SET TransNumber = 'TXN1032874'
+WHERE TransNumber IS NULL AND ItemID = '138';  
+
+DELETE FROM TRANSACTIONS-- Deleting transactions. 
+WHERE TransNumber IN  ('TXN1032871','TXN1032872','TXN1032874');
+
+SELECT*-- Showing that the transactions have been deleted.
+FROM TRANSACTIONS
+WHERE TransNumber IN  ('TXN1032871','TXN1032872','TXN1032874');
+
+SELECT*-- Showing that the transaction number has been removed from the product on which the transaction was made.
+FROM ITEMS
+WHERE ITEMID IN('13','117','138')
+
+
+SELECT*-- Final state of the canceled transactions table.
+FROM CANCELEDTRANSACTIONS
+
+
+
+
+
+--question 7 procedure
+
+CREATE PROCEDURE SmartItemPromotions
+    @MinSearches INT,     -- The minimum number of searches for a product to avoid being considered "not popular".
+    @Months INT,             -- The number of recent months to be used in the active customers function.
+    @TopN INT             -- The maximum number of ratings to be displayed for each customer.
+
+AS
+BEGIN
+  -- Step 1: Create a list of products with few searches.
+    SELECT I.ItemID, 
+           ISNULL(I.Category, 'Unknown') AS Category, -- Handling NULL in the category.
+           ISNULL(I.UserName, 'Unknown') AS SellerID  -- Handling NULL in the seller.
+    INTO #LowSearchItems
+    FROM ITEMS I
+    LEFT JOIN SEARCHES S ON I.ItemID = S.ItemID
+    WHERE (S.SearchDT >= DATEADD(MONTH, -@Months, GETDATE()) OR S.SearchDT IS NULL) 
+          AND I.TransNumber IS NULL
+    GROUP BY I.ItemID, I.Category, I.UserName
+    HAVING COUNT(S.SearchDT) < @MinSearches;
+
+-- Step 2: Retrieve a list of active customers using the function.
+    SELECT ISNULL(GBB.Buyer, 'Unknown') AS Buyer  
+    INTO #ActiveCustomers
+    FROM dbo.Get_Active_Buyers_By_Date(@Months) AS GBB;
+
+
+-- Step 3: Create a match between active customers and products with few searches.
+    SELECT DISTINCT 
+        AC.Buyer,  
+        LSI.ItemID,
+        LSI.Category,
+        LSI.SellerID,
+        ROW_NUMBER() OVER (
+            PARTITION BY AC.Buyer, LSI.ItemID  -- Add LSI.ItemID to ensure uniqueness.
+            ORDER BY 
+                CASE 
+                  -- Higher rating if both the category and the seller were found in previous searches.
+                    WHEN ISNULL(LSI.Category, 'Unknown') IN (
+                        SELECT DISTINCT ISNULL(I.Category, 'Unknown')  
+                        FROM SEARCHES S  
+                        JOIN ITEMS I ON S.ItemID = I.ItemID
+                        WHERE S.UserName = AC.Buyer  
+                    ) AND ISNULL(LSI.SellerID, 'Unknown') IN (
+                        SELECT DISTINCT ISNULL(S.UserName, 'Unknown')  
+                        FROM SEARCHES S  
+                        WHERE S.UserName = AC.Buyer  
+                    ) THEN 1
+                -- Medium rating if only the category matches.
+                    WHEN ISNULL(LSI.Category, 'Unknown') IN (
+                        SELECT DISTINCT ISNULL(I.Category, 'Unknown')  
+                        FROM SEARCHES S  
+                        JOIN ITEMS I ON S.ItemID = I.ItemID
+                        WHERE S.UserName = AC.Buyer  
+                    ) THEN 2
+                    -- Low rating if only the seller matches.
+                    WHEN ISNULL(LSI.SellerID, 'Unknown') IN (
+                        SELECT DISTINCT ISNULL(S.UserName, 'Unknown')  
+                        FROM SEARCHES S  
+                        WHERE S.UserName = AC.Buyer  
+                    ) THEN 3
+					-- Very low rating if there is no match.
+                    ELSE 4
+                END, 
+                LSI.ItemID
+        ) AS Rank
+    INTO #RankedPromotions
+    FROM #ActiveCustomers AC
+    JOIN SEARCHES S ON AC.Buyer = S.UserName
+    JOIN #LowSearchItems LSI ON S.ItemID = LSI.ItemID;
+
+	-- Step 4: Select ratings for each customer based on input (TopN) and remove duplicates.
+    WITH DistinctPromotions AS (
+        SELECT DISTINCT RP.Buyer, 
+                        LSI.ItemID, 
+                        LSI.Category, 
+                        LSI.SellerID
+        FROM #RankedPromotions RP
+        JOIN #LowSearchItems LSI ON RP.ItemID = LSI.ItemID
+        WHERE RP.Rank <= @TopN
+    )
+    SELECT Buyer, 
+           STRING_AGG(CONCAT(ItemID, ':', Category, ':', SellerID), ', ') AS Recommendations
+    INTO #TopNPromotions
+    FROM DistinctPromotions
+    GROUP BY Buyer;
+
+    -- Display the results.
+    SELECT Buyer, Recommendations
+    FROM #TopNPromotions;
+
+-- Clean up the temporary tables.
+    DROP TABLE #LowSearchItems;
+    DROP TABLE #ActiveCustomers;
+    DROP TABLE #RankedPromotions;
+    DROP TABLE #TopNPromotions;
+	END;
+
+EXECUTE SmartItemPromotions @MinSearches = 2, @Months = 6, @TopN = 3;
+
+--question 8 gpt
+SELECT
+  Country,
+  ProductCategory,
+  ProductCount
+FROM (
+    SELECT
+        B.AddressCountry AS Country,
+        I.Category AS ProductCategory,
+        COUNT(*) AS ProductCount
+    FROM
+        BUYERS AS B
+    JOIN
+        TRANSACTIONS AS T ON B.UserName = T.Buyer
+    JOIN
+        ITEMS AS I ON T.TransNumber = I.TransNumber
+    WHERE
+        B.AddressCountry NOT IN ('Canada')
+    GROUP BY
+        B.AddressCountry, I.Category
+) AS FilteredData
+WHERE
+    ProductCount > 5
+ORDER BY
+    ProductCount DESC;
+
+
+
+	SELECT TOP 10
+    Buyer,
+    Country,
+    TotalOldItemsPurchased,
+    TotalSpentOnOldItems
+FROM (
+    SELECT
+        B.UserName AS Buyer,
+        B.AddressCountry AS Country,
+        COUNT(T.TransNumber) AS TotalOldItemsPurchased,
+        SUM(T.FinalPrice) AS TotalSpentOnOldItems
+    FROM
+        BUYERS AS B
+    JOIN
+        TRANSACTIONS AS T ON B.UserName = T.Buyer
+    JOIN
+        ITEMS AS I ON T.TransNumber = I.TransNumber
+    WHERE
+        I.Condition IN ('Used', '[Good Condition]')
+    GROUP BY
+        B.UserName, B.AddressCountry
+) AS FilteredData
+WHERE
+    TotalOldItemsPurchased > 5
+    AND TotalSpentOnOldItems > 100
+ORDER BY
+    TotalOldItemsPurchased DESC, TotalSpentOnOldItems DESC;
+
+
+
+
+
+
+CREATE PROCEDURE Process_Transaction
+    @TransNumber NVARCHAR(15),
+    @CreditCardNumber NVARCHAR(20),
+    @CVV INT,
+    @FinalPrice MONEY,
+    @TransactionDate DATE,
+    @Buyer NVARCHAR(20),
+    @Seller NVARCHAR(20)
+AS
+BEGIN
+    BEGIN TRY
+        -- Step 1: Validate the credit card details (existence, CVV match, and expiration date)
+        IF NOT EXISTS (
+            SELECT 1
+            FROM CREDITCARDS
+            WHERE CreditCard = @CreditCardNumber
+              AND CVV = @CVV
+              AND ExpireDT >= GETDATE()
+        )
+        BEGIN
+            -- Throw a custom error if the credit card validation fails
+            THROW 50001, 'Invalid Credit Card: Details do not match or the card is expired.', 1;
+        END
+
+        -- Step 2: Insert the transaction into the TRANSACTIONS table
+        INSERT INTO TRANSACTIONS (TransNumber, CreditCardNumber, FinalPrice, TransactionDate, Buyer, Seller)
+        VALUES (@TransNumber, @CreditCardNumber, @FinalPrice, @TransactionDate, @Buyer, @Seller);
+
+        PRINT 'Transaction processed successfully.';
+    END TRY
+    BEGIN CATCH
+        -- Step 3: Handle the error and rollback the transaction if necessary
+        IF EXISTS (
+            SELECT 1
+            FROM TRANSACTIONS
+            WHERE TransNumber = @TransNumber
+        )
+        BEGIN
+            DELETE FROM TRANSACTIONS
+            WHERE TransNumber = @TransNumber;
+        END
+
+        PRINT 'Transaction failed and was rolled back.';
+    END CATCH
+	END;
+
+	EXEC Process_Transaction 
+    @TransNumber = 'TXN1038200',
+    @CreditCardNumber = '4023-7142-5525-712', 
+    @CVV = 916,
+    @FinalPrice = 1678.83,
+    @TransactionDate = '2023-12-09 16:41:34.000',
+    @Buyer = 'michael4200',
+    @Seller = 'laura8784';
+
+
+
+	CREATE FUNCTION GetCategorySalesByYear (@Year INT)
+RETURNS TABLE
+AS
+RETURN
+(
+    SELECT *
+    FROM (
+        SELECT 
+            DATENAME(MONTH, T.TransactionDate) AS MonthName,
+            I.Category AS ProductCategory,
+            COUNT(*) AS TotalSales
+        FROM TRANSACTIONS AS T
+        JOIN ITEMS AS I ON T.TransNumber = I.TransNumber
+        WHERE YEAR(T.TransactionDate) = @Year  
+        GROUP BY DATENAME(MONTH, T.TransactionDate), I.Category
+    ) AS SourceTable
+    PIVOT (                
+        SUM(TotalSales)
+        FOR MonthName IN ([January], [February], [March], [April], [May], [June], 
+                          [July], [August], [September], [October], [November], [December])
+    ) AS PivotTable
+);
+
+SELECT * 
+FROM dbo.GetCategorySalesByYear(2024);
+
+--powerbi
+CREATE VIEW CategoryReport AS
+
+WITH 
+   -- Subquery 1: Identifying products that were not purchased but were searched frequently. 
+    ProductSearches AS (
+        SELECT 
+        s.ItemID,
+        i.Category,
+        COUNT(s.ItemID) AS SearchCount,
+        i.Condition,
+        i.Price,
+        i.UserName
+    FROM SEARCHES s
+    JOIN ITEMS i ON s.ItemID = i.ItemID
+    GROUP BY s.ItemID, i.Category, i.Condition, i.Price, i.TransNumber, i.UserName
+    HAVING COUNT(s.ItemID) > 15 AND i.TransNumber IS NULL
+    ),
+
+   -- Subquery 2: Sellers with fewer than 3 transactions.
+    SellerTransactions AS (
+        SELECT 
+            t.Seller,
+            COUNT(*) AS SellerTransactions
+        FROM TRANSACTIONS t
+        GROUP BY t.Seller
+        HAVING COUNT(*) < 10 -- Sellers with fewer than 3 transactions.
+    ),
+
+   -- Subquery 3: Calculating the average price by categories.
+    AvgCategoryPrices AS (
+        SELECT 
+            i.Category,
+            AVG(i.Price) AS AvgPrice
+        FROM ITEMS i
+        GROUP BY i.Category
+    ),
+
+  -- Subquery 4: Joining all data related to the product (searches, sellers, average prices).
+    ProductDetails AS (
+        SELECT 
+            i.ItemID,
+            i.Category,
+            i.UserName,
+            i.Price,
+            i.Condition,
+            ps.SearchCount,
+            st.Seller,
+            ac.AvgPrice
+        FROM 
+            ITEMS i
+        JOIN 
+            ProductSearches ps ON i.ItemID = ps.ItemID  
+        LEFT JOIN 
+            SellerTransactions st ON i.UserName = st.Seller  
+        JOIN 
+            AvgCategoryPrices ac ON i.Category = ac.Category 
+    )
+
+SELECT 
+    pd.Category,
+    COUNT(DISTINCT pd.ItemID) AS ProductCount,
+    SUM(CASE WHEN pd.Condition = 'Used' THEN 1 ELSE 0 END) AS UsedProducts,
+    SUM(CASE WHEN pd.Seller IS NOT NULL THEN 1 ELSE 0 END) AS UnreliableSellers,
+    SUM(CASE WHEN pd.Price > pd.AvgPrice THEN 1 ELSE 0 END) AS HighPriceProducts
+FROM 
+    ProductDetails pd
+GROUP BY 
+    pd.Category
+ORDER BY 
+    pd.Category;
+
+
+
+
+
+
+	CREATE VIEW SALESCATEGORY AS
+
+	SELECT
+	 YEAR(T.TransactionDate) AS SaleYear, 
+    MONTH(T.TransactionDate) AS SaleMonth, 
+	I.Category,
+	SALES=SUM(T.FINALPRICE),
+	PRECENT=(100)*SUM(T.FINALPRICE)/
+	(
+	SELECT 
+	SUM(K.FINALPRICE)
+	FROM TRANSACTIONS AS K
+	WHERE YEAR(K.TransactionDate) = YEAR(T.TransactionDate) 
+       AND MONTH(K.TransactionDate) = MONTH(T.TransactionDate)
+	)
+	FROM TRANSACTIONS AS T JOIN ITEMS AS I ON(T.TRANSNUMBER=I.TRANSNUMBER)
+	
+	GROUP BY I.CATEGORY,  YEAR(T.TransactionDate),  MONTH(T.TransactionDate)
+
+
+
+	CREATE VIEW TransactionsByYearAndCountry AS
+SELECT 
+    YEAR(T.TRANSACTIONDATE) AS TransactionYear,  
+    B.AddressCountry AS Country, 
+    COUNT(DISTINCT T.Buyer) AS UniqueTransactions 
+FROM 
+    TRANSACTIONS T
+JOIN 
+    BUYERS B ON T.Buyer = B.UserName  
+GROUP BY 
+    YEAR(T.TRANSACTIONDATE), B.AddressCountry; 
+
